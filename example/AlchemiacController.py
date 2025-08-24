@@ -82,7 +82,6 @@ def eeg_callback(samples):
     
     #global eeg_writer
     if q is not None:
-        print("check")
         q.put(np.array(samples))  # send to visualizer
     
     eeg_writer.writerows(samples)
@@ -113,10 +112,10 @@ if __name__ == "__main__":
 
         # Start of live demo sequence
         print("Starting experience")
-        proxy.set_async_config()
+        #proxy.set_async_config()
 
         # Phase 1: Just let the EEG stream for 6 minutes (adjust to your demo needs)
-        sleep(360)
+        sleep(240)
 
     except KeyboardInterrupt:
         print("[MAIN] KeyboardInterrupt caught in try-block.")

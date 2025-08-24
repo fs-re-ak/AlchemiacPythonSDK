@@ -104,6 +104,14 @@ class AlchemiacProxy:
             print(f"[AlchemiacProxy.py] motion_handler: queueing failed, somehow {e}")
 
 
+        
+    async def config_handler(self, sender, data):
+        
+        try:
+            print(data)
+        except Exception as e:
+            print(f"[AlchemiacProxy.py] config_handler: failed {e}")
+
 
     async def notification_handler(self, sender, data):
         """Handler for receiving notifications from the button characteristic."""
@@ -184,7 +192,8 @@ class AlchemiacProxy:
         
     def set_async_config(self):
         async def set_config_tmp(self):
-            await self.set_test_mode()
+            #await self.set_test_mode()
+            await self.read_register()
         asyncio.run(set_config_tmp(self))   
 
     def trigger_shutdown(self):
@@ -192,7 +201,7 @@ class AlchemiacProxy:
             self.loop.call_soon_threadsafe(self.shutdown_event.set)
 
 
-    async def main_task(self, deviceAddress="00:80:E1:27:2F:B3", deviceName = "Hermes V1"):
+    async def main_task(self, deviceAddress="00:80:E1:27:47:66", deviceName = "Hermes V1"):
 
         self.client = BleakClient(deviceAddress)
         try:
@@ -210,6 +219,10 @@ class AlchemiacProxy:
             await self.client.start_notify(MOTION_UUID, self.motion_handler)
             print("Subscribed to accelerometer notifications.")
             
+            # Subscribe to accelerometer notifications
+            await self.client.start_notify(EEG_CONFIG_UUID, self.config_handler)
+            print("Subscribed to accelerometer notifications.")
+            
             # Subscribe to new characteristic notifications with asyncio.create_task
             await self.client.start_notify(
                 EEG_DATA_UUID,
@@ -224,6 +237,7 @@ class AlchemiacProxy:
             await self.client.stop_notify(EEG_DATA_UUID)
             await self.client.stop_notify(EVENT_UUID)
             await self.client.stop_notify(MOTION_UUID)
+            await self.client.stop_notify(EEG_CONFIG_UUID)
             print("Finished")
             self.is_connected = False
         
@@ -240,6 +254,23 @@ class AlchemiacProxy:
             print("Configuration bytes sent.")
         else:
             raise RuntimeError("Client is not connected.")
+              
+    
+    async def read_register(self):
+        if self.client and self.client.is_connected:
+            config_bytes = bytes([0x02, 0x01, 0x01, 0x95])
+            await self.client.write_gatt_char(EEG_CONFIG_UUID, config_bytes)
+            print("Configuration bytes sent.")
+            
+            await asyncio.sleep(3)
+            
+            config_bytes = bytes([0x01, 0x01, 0x00, 0x00])
+            await self.client.write_gatt_char(EEG_CONFIG_UUID, config_bytes)
+            print("Start streaming sent.")
+            
+        else:
+            raise RuntimeError("Client is not connected.")
+              
               
     @staticmethod    
     def worker_process(eeg_queue, callback):
