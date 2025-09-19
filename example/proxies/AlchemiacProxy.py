@@ -200,8 +200,9 @@ class AlchemiacProxy:
         if self.loop:
             self.loop.call_soon_threadsafe(self.shutdown_event.set)
 
-
+    
     async def main_task(self, deviceAddress="00:80:E1:27:47:66", deviceName = "Hermes V1"):
+        # 00:80:E1:27:47:BC
 
         self.client = BleakClient(deviceAddress)
         try:

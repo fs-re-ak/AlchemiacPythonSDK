@@ -14,7 +14,7 @@ def butter_bandpass(lowcut, highcut, fs, order=4):
 
 
 def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=250, 
-               apply_filter=True, lowcut=0.5, highcut=40.0, order=2):
+               apply_filter=True, lowcut=10, highcut=40.0, order=2):
     """
     Real-time EEG plotter using PyQtGraph with optional bandpass filtering.
 
