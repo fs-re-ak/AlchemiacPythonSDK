@@ -47,7 +47,7 @@ SAMPLE_RATE = 250
 
 class AlchemiacProxy:
     
-    def __init__(self, mac_address="", eeg_callback=None, motion_callback=None, event_callback=None, ):
+    def __init__(self, mac_address, eeg_callback=None, motion_callback=None, event_callback=None, ):
 
         self.is_connected = False
         self.client = None
@@ -55,6 +55,7 @@ class AlchemiacProxy:
         self.packets = []
         self.samples_per_packets = []
         self.packet_received = []
+        self.mac_address = mac_address
         
         self.eeg_queue = multiprocessing.Queue()
         self.motion_queue = multiprocessing.Queue()
@@ -187,7 +188,7 @@ class AlchemiacProxy:
     def run_async_main(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self.main_task())
+        self.loop.run_until_complete(self.main_task(self.mac_address))
         
         
     def set_async_config(self):
@@ -201,7 +202,7 @@ class AlchemiacProxy:
             self.loop.call_soon_threadsafe(self.shutdown_event.set)
 
     
-    async def main_task(self, deviceAddress="00:80:E1:27:47:66", deviceName = "Hermes V1"):
+    async def main_task(self, deviceAddress, deviceName = "Hermes V1"):
         # 00:80:E1:27:47:BC
 
         self.client = BleakClient(deviceAddress)

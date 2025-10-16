@@ -101,7 +101,7 @@ if __name__ == "__main__":
 
     try:
         # Initialize Muse connection
-        proxy = AlchemiacProxy(eeg_callback=eeg_callback, motion_callback=motion_callback)
+        proxy = AlchemiacProxy("00:80:E1:27:4C:28", eeg_callback=eeg_callback, motion_callback=motion_callback)
         proxy.waitForConnected()
         
 
