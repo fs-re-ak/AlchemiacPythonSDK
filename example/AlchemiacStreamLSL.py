@@ -7,7 +7,7 @@ from proxies.AlchemiacProxy import AlchemiacProxy
 
 # configuration
 EEG_CHANNELS = ["AF8","AF7","CHEEK_R","CHEEK_L","EAR_R","AFz","BROW_L","NOSE"]
-EEG_SAMPLING_RATE = 256       
+EEG_SAMPLING_RATE = 250       
 
 MOTION_CHANNELS = ["ax(g)","ay(g)","az(g)","gx(deg/s)","gy(deg/s)","gz(deg/s)","cx(G)","cy(G)","cz(G)"]
 MOTION_SAMPLING_RATE = 100     
