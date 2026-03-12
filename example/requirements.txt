@@ -1,7 +1,8 @@
-bitstring==4.3.1
-bleak==1.0.1
-matplotlib==3.10.3
-numpy==2.3.1
+bleak==2.1.1
+matplotlib==3.10.8
+numpy==2.4.3
+PyQt5==5.15.11
+PyQt5_sip==12.17.0
 pyqtgraph==0.13.7
-scipy==1.16.0
+scipy==1.17.1
 sounddevice==0.5.1
