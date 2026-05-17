@@ -14,7 +14,7 @@ def butter_bandpass(lowcut, highcut, fs, order=4):
 
 
 def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=250, 
-               apply_filter=True, lowcut=10, highcut=40.0, order=2):
+               apply_filter=True, lowcut=15, highcut=30.0, order=2):
     """
     Real-time EEG plotter using PyQtGraph with optional bandpass filtering.
 
@@ -70,9 +70,19 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
         nonlocal filter_states
         while True:
             try:
-                samples = queue.get_nowait()  # shape (M, N)
+                samples = queue.get_nowait()
             except Empty:
                 break
+
+            # Shutdown sentinel
+            if samples is None:
+                app.quit()
+                return
+
+            # Guard: must be a 2-D float array with the right number of columns
+            if not isinstance(samples, np.ndarray) or samples.ndim != 2 or samples.shape[1] != nbChannels:
+                print(f"[VISUALIZER] Unexpected sample shape {getattr(samples, 'shape', type(samples))}, skipping.")
+                continue
 
             for i in range(samples.shape[0]):
                 sample = samples[i, :]
@@ -80,11 +90,14 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
                 if apply_filter:
                     filtered_sample = np.zeros(nbChannels)
                     for j in range(nbChannels):
-                        filtered_sample[j], filter_states[j] = lfilter(
-                            b, a, [sample[j]], zi=filter_states[j]
+                        # lfilter returns (y, zf).  y has shape (1,) — extract the
+                        # scalar explicitly so this works across all NumPy versions.
+                        y, filter_states[j] = lfilter(
+                            b, a, [float(sample[j])], zi=filter_states[j]
                         )
+                        filtered_sample[j] = float(y[0])
                 else:
-                    filtered_sample = sample  # raw
+                    filtered_sample = sample.astype(float)
 
                 # Update buffers and curves
                 for j in range(nbChannels):

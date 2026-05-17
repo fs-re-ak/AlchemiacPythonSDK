@@ -49,8 +49,14 @@ q = None
 
 def eeg_callback(samples):
     global q
-    if q is not None:
-        q.put(np.array(samples))
+    if not samples:           # skip empty packet (e.g. 0-byte data after header)
+        return
+    arr = np.array(samples, dtype=np.float64)
+    # Only forward well-formed 2-D arrays; log anything unexpected
+    if arr.ndim != 2 or arr.shape[1] != 8:
+        print(f"[EEG] Unexpected sample array shape {arr.shape}, skipping visualizer update.")
+    elif q is not None:
+        q.put(arr)
     eeg_writer.writerows(samples)
 
 

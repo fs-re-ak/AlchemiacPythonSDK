@@ -290,11 +290,16 @@ class AlchemiacProxy:
                 
                 if packet_received:
                     samples = []
+                    n_complete = len(data) // 24  # ignore any trailing partial chunk
                     if len(data) % 24 != 0:
-                        print(f"Warning: Data length {len(data)} is not a multiple of 24.")
-                    for i in range(0, len(data), 24):  # Each sample is 24 bytes (8 channels * 3 bytes)
+                        print(f"Warning: packet {packet_number} has {len(data)} bytes "
+                              f"(not a multiple of 24). Dropping {len(data) % 24} trailing byte(s).")
+                    if n_complete == 0:
+                        print(f"Warning: packet {packet_number} has no complete samples, skipping.")
+                        continue
+                    for i in range(0, n_complete * 24, 24):  # only complete 24-byte samples
                         sample = []
-                        for j in range(0, 24, 3):  # Each channel is 3 bytes (24 bits)
+                        for j in range(0, 24, 3):  # 8 channels × 3 bytes each
                             channel_data = data[i + j:i + j + 3]
                             sample.append(int.from_bytes(channel_data, byteorder='big', signed=True))
                         samples.append(AlchemiacProxy.convert_ads1299_to_microvolts(sample))
