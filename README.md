@@ -1,6 +1,6 @@
 # AlchemiacPythonSDK
 
-Open-source Python SDK for the **Hermes V1** EEG headset by Alchemiac. It provides a BLE proxy that streams real-time EEG and motion data to your application via callbacks, along with a ready-to-run controller that records data to CSV and renders a live visualizer.
+Open-source Python SDK for the **Hermes V1** EEG headset by Alchemiac. It provides a BLE proxy that streams real-time EEG and motion data to your application via callbacks, along with ready-to-run tools for recording, visualisation, and LSL streaming.
 
 ---
 
@@ -8,6 +8,7 @@ Open-source Python SDK for the **Hermes V1** EEG headset by Alchemiac. It provid
 
 - [Cloning the repository](#cloning-the-repository)
 - [Running AlchemiacController](#running-alchemiaccontroller)
+- [Streaming via LSL](#streaming-via-lsl)
 - [SDK Integration Guide](#sdk-integration-guide)
   - [AlchemiacProxy](#alchemiacproxy)
   - [Callbacks](#callbacks)
@@ -100,14 +101,61 @@ python AlchemiacController.py
 
 ---
 
+## Streaming via LSL
+
+`AlchemiacStreamLSL.py` publishes EEG and motion data as two [Lab Streaming Layer](https://labstreaminglayer.org/) (LSL) streams, making the headset compatible with any LSL-aware recording software (e.g. BrainVision Recorder, OpenViBE, BIDS-LSL, MNE-LSL).
+
+Install the additional dependency before running:
+
+```bash
+pip install pylsl
+```
+
+Then run from inside the `example/` directory:
+
+```bash
+cd example
+python AlchemiacStreamLSL.py
+```
+
+### What to expect
+
+The startup sequence is identical to `AlchemiacController` — BLE scan, device selection menu, connection confirmations — followed by LSL-specific output:
+
+```
+[INFO] LSL streams initialized: Reak_EEG + Reak_Motion
+Stabilising signal…
+[INFO] Streaming EEG + Motion via LSL. Press Ctrl+C to stop.
+```
+
+The script then runs **indefinitely** (no fixed duration), forwarding data to LSL consumers in real time. Press **Ctrl+C** to trigger a clean shutdown:
+
+```
+[INFO] Ctrl+C received. Initiating shutdown...
+[MAIN] Cleaning up…
+[MAIN] Shutdown complete. Goodbye!
+```
+
+### LSL stream details
+
+| Stream name | Type | Channels | Rate | Format |
+|---|---|---|---|---|
+| `Reak_EEG` | `EEG` | 8 — `AF8, AF7, CHEEK_R, CHEEK_L, EAR_R, AFz, BROW_L, NOSE` | 250 Hz | float32 (µV) |
+| `Reak_Motion` | `Motion` | 9 — `ax(g), ay(g), az(g), gx(deg/s), gy(deg/s), gz(deg/s), cx(G), cy(G), cz(G)` | 100 Hz | float32 |
+
+Each stream carries full channel metadata (label per channel) readable by any LSL resolver. Stream UIDs are `reak_eeg_001` and `reak_motion_001`.
+
+---
+
 ## SDK Integration Guide
 
-The two files you need for your own integration are:
+The files relevant to integration are:
 
 | File | Purpose |
 |---|---|
 | `example/proxies/AlchemiacProxy.py` | BLE transport layer — handles connection, packet reassembly, and data decoding |
-| `example/AlchemiacController.py` | Reference application showing the full lifecycle |
+| `example/AlchemiacController.py` | Reference application — CSV recording + live EEG visualiser |
+| `example/AlchemiacStreamLSL.py` | Reference application — forwards data to LSL for compatible recording software |
 
 ---
 
