@@ -46,10 +46,13 @@ SAMPLE_RATE = 250
 
 
 class AlchemiacProxy:
+
+    CONNECT_TIMEOUT = 30.0
     
     def __init__(self, mac_address, eeg_callback=None, motion_callback=None, event_callback=None, ):
 
         self.is_connected = False
+        self.connection_error = None
         self.client = None
         self.last_packet = None
         self.packets = []
@@ -74,11 +77,22 @@ class AlchemiacProxy:
         
         pass
         
-    def waitForConnected(self):
-        
+    def waitForConnected(self, timeout=None):
+        if timeout is None:
+            timeout = self.CONNECT_TIMEOUT
+        deadline = time() + timeout
         while not self.is_connected:
+            if self.connection_error:
+                raise RuntimeError(
+                    f"BLE connection failed for {self.mac_address}: {self.connection_error}"
+                )
+            if time() >= deadline:
+                raise RuntimeError(
+                    f"Timed out after {timeout:.0f}s waiting for BLE connection to "
+                    f"{self.mac_address}. On macOS: power-cycle the headset, toggle "
+                    "Bluetooth, and ensure no other app is connected."
+                )
             sleep(0.1)
-        pass
         
     def disconnect(self):
    
@@ -207,42 +221,46 @@ class AlchemiacProxy:
 
         self.client = BleakClient(deviceAddress)
         try:
-            await self.client.connect()
-            
-            print(f"Connected to {deviceName} [{deviceAddress}]")
-            self.is_connected = True
-            start = time()
+            try:
+                await self.client.connect(timeout=self.CONNECT_TIMEOUT)
 
-            # Subscribe to button notifications
-            await self.client.start_notify(EVENT_UUID, self.notification_handler)
-            print("Subscribed to button notifications.")
-            
-            # Subscribe to accelerometer notifications
-            await self.client.start_notify(MOTION_UUID, self.motion_handler)
-            print("Subscribed to accelerometer notifications.")
-            
-            # Subscribe to accelerometer notifications
-            await self.client.start_notify(EEG_CONFIG_UUID, self.config_handler)
-            print("Subscribed to accelerometer notifications.")
-            
-            # Subscribe to new characteristic notifications with asyncio.create_task
-            await self.client.start_notify(
-                EEG_DATA_UUID,
-                lambda sender, data: asyncio.create_task(self.packet_handler(self.client, sender, data))
-            )
-            print("Subscribed to EEG data characteristic notifications.")
+                print(f"Connected to {deviceName} [{deviceAddress}]")
+                self.is_connected = True
+                start = time()
 
-            await self.shutdown_event.wait()
+                # Subscribe to button notifications
+                await self.client.start_notify(EVENT_UUID, self.notification_handler)
+                print("Subscribed to button notifications.")
 
-            print(time()-start)
-        
-            await self.client.stop_notify(EEG_DATA_UUID)
-            await self.client.stop_notify(EVENT_UUID)
-            await self.client.stop_notify(MOTION_UUID)
-            await self.client.stop_notify(EEG_CONFIG_UUID)
-            print("Finished")
-            self.is_connected = False
-        
+                # Subscribe to accelerometer notifications
+                await self.client.start_notify(MOTION_UUID, self.motion_handler)
+                print("Subscribed to accelerometer notifications.")
+
+                # Subscribe to accelerometer notifications
+                await self.client.start_notify(EEG_CONFIG_UUID, self.config_handler)
+                print("Subscribed to accelerometer notifications.")
+
+                # Subscribe to new characteristic notifications with asyncio.create_task
+                await self.client.start_notify(
+                    EEG_DATA_UUID,
+                    lambda sender, data: asyncio.create_task(self.packet_handler(self.client, sender, data))
+                )
+                print("Subscribed to EEG data characteristic notifications.")
+
+                await self.shutdown_event.wait()
+
+                print(time()-start)
+
+                await self.client.stop_notify(EEG_DATA_UUID)
+                await self.client.stop_notify(EVENT_UUID)
+                await self.client.stop_notify(MOTION_UUID)
+                await self.client.stop_notify(EEG_CONFIG_UUID)
+                print("Finished")
+                self.is_connected = False
+            except Exception as e:
+                self.connection_error = str(e)
+                print(f"[AlchemiacProxy] Connection failed: {e}")
+
         finally:
             if self.client and self.client.is_connected:
                 await self.client.disconnect()

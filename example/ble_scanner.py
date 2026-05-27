@@ -1,17 +1,23 @@
 import asyncio
-from bleak import BleakScanner, BleakClient
 
-async def scan_and_list_services():
-    print("Scanning for BLE devices...")
-    devices = await BleakScanner.discover()
-    
-    if not devices:
-        print("No devices found. Ensure your BLE device is powered on and in range.")
+from utils.ble_discovery import DEVICE_NAME, SCAN_TIMEOUT, scan_devices
+
+
+async def main():
+    print(f"Scanning for '{DEVICE_NAME}' ({SCAN_TIMEOUT:.0f} s)...")
+    hermes_devices, all_devices = await scan_devices()
+
+    if hermes_devices:
+        print(f"\nMatched {len(hermes_devices)} Hermes device(s):")
+        for i, entry in enumerate(hermes_devices):
+            print(f"  {i}: {entry.display_name} [{entry.device.address}]")
         return
-    
-    for i, device in enumerate(devices):
-        print(f"{i}: {device.name} [{device.address}]")
-    
+
+    print(f"No '{DEVICE_NAME}' devices matched automatically.")
+    print(f"\nSaw {len(all_devices)} nearby BLE device(s):")
+    for i, entry in enumerate(all_devices):
+        print(f"  {i}: {entry.display_name} [{entry.device.address}]")
+
 
 if __name__ == "__main__":
-    asyncio.run(scan_and_list_services())
+    asyncio.run(main())
