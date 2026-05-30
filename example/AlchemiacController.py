@@ -82,7 +82,16 @@ if __name__ == "__main__":
 
     # 2. Start the EEG visualizer in a separate process
     q = Queue()
-    vis_process = Process(target=visualizer, args=(q, shutdown_event))
+    vis_process = Process(
+        target=visualizer,
+        args=(q, shutdown_event),
+        kwargs={
+            "apply_bandstop": True,
+            "bandstop_low": 45.0,
+            "bandstop_high": 65.0,
+            "bandstop_order": 6,
+        },
+    )
     vis_process.start()
 
     proxy = None

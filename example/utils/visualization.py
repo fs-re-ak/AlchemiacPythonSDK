@@ -13,8 +13,16 @@ def butter_bandpass(lowcut, highcut, fs, order=4):
     return butter(order, [low, high], btype='band')
 
 
+def butter_bandstop(lowcut, highcut, fs, order=4):
+    nyquist = 0.5 * fs
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    return butter(order, [low, high], btype='bandstop')
+
+
 def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=250, 
-               apply_filter=True, lowcut=15, highcut=30.0, order=2):
+               apply_filter=True, lowcut=15, highcut=30.0, order=2,
+               apply_bandstop=False, bandstop_low=45.0, bandstop_high=65.0, bandstop_order=6):
     """
     Real-time EEG plotter using PyQtGraph with optional bandpass filtering.
 
@@ -40,6 +48,15 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
 
     order : int
         Filter order.
+
+    apply_bandstop : bool
+        If True, applies an aggressive band-stop filter before the bandpass (default: False).
+
+    bandstop_low, bandstop_high : float
+        Band-stop cutoff frequencies (Hz).
+
+    bandstop_order : int
+        Band-stop filter order (higher = sharper cutoff).
     """
 
     app = QtWidgets.QApplication([])
@@ -59,15 +76,23 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
 
     channel_offsets = [100 * i for i in range(nbChannels)]
 
-    # --- Initialize filter if enabled ---
+    # --- Initialize filters if enabled ---
     if apply_filter:
         b, a = butter_bandpass(lowcut, highcut, fs=samplingRate, order=order)
         filter_states = [lfilter_zi(b, a) * 0 for _ in range(nbChannels)]
     else:
         b, a, filter_states = None, None, None
 
+    if apply_bandstop:
+        b_stop, a_stop = butter_bandstop(
+            bandstop_low, bandstop_high, fs=samplingRate, order=bandstop_order
+        )
+        bandstop_states = [lfilter_zi(b_stop, a_stop) * 0 for _ in range(nbChannels)]
+    else:
+        b_stop, a_stop, bandstop_states = None, None, None
+
     def update():
-        nonlocal filter_states
+        nonlocal filter_states, bandstop_states
         while True:
             try:
                 samples = queue.get_nowait()
@@ -87,15 +112,22 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
             for i in range(samples.shape[0]):
                 sample = samples[i, :]
 
-                if apply_filter:
+                if apply_filter or apply_bandstop:
                     filtered_sample = np.zeros(nbChannels)
                     for j in range(nbChannels):
-                        # lfilter returns (y, zf).  y has shape (1,) — extract the
-                        # scalar explicitly so this works across all NumPy versions.
-                        y, filter_states[j] = lfilter(
-                            b, a, [float(sample[j])], zi=filter_states[j]
-                        )
-                        filtered_sample[j] = float(y[0])
+                        x = float(sample[j])
+                        if apply_bandstop:
+                            y_stop, bandstop_states[j] = lfilter(
+                                b_stop, a_stop, [x], zi=bandstop_states[j]
+                            )
+                            x = float(y_stop[0])
+                        if apply_filter:
+                            y, filter_states[j] = lfilter(
+                                b, a, [x], zi=filter_states[j]
+                            )
+                            filtered_sample[j] = float(y[0])
+                        else:
+                            filtered_sample[j] = x
                 else:
                     filtered_sample = sample.astype(float)
 
