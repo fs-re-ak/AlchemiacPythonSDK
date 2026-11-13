@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from collections import deque
 
+from proxies import packet_format
+
 
 
 ACC_SENS  = 0.061 / 1000      # 0.061 mg/LSB → g
@@ -49,7 +51,7 @@ class AlchemiacProxy:
 
     CONNECT_TIMEOUT = 30.0
     
-    def __init__(self, mac_address, eeg_callback=None, motion_callback=None, event_callback=None, ):
+    def __init__(self, mac_address, eeg_callback=None, motion_callback=None, event_callback=None, ppg_callback=None):
 
         self.is_connected = False
         self.connection_error = None
@@ -66,7 +68,7 @@ class AlchemiacProxy:
         self.shutdown_event = asyncio.Event()
         self.loop = None  # Global to hold the event loop reference
         
-        self.eeg_worker = threading.Thread(target=AlchemiacProxy.worker_process, args=(self.eeg_queue, eeg_callback))
+        self.eeg_worker = threading.Thread(target=AlchemiacProxy.worker_process, args=(self.eeg_queue, eeg_callback, ppg_callback))
         self.eeg_worker.start()
 
         self.motion_worker = threading.Thread(target=AlchemiacProxy.motion_process, args=(self.motion_queue, motion_callback))
@@ -292,10 +294,17 @@ class AlchemiacProxy:
             raise RuntimeError("Client is not connected.")
               
               
-    @staticmethod    
-    def worker_process(eeg_queue, callback):
-        """Worker process to write samples to a CSV file."""
-        
+    @staticmethod
+    def worker_process(eeg_queue, callback, ppg_callback=None):
+        """
+        Worker process to write samples to a CSV file.
+
+        callback(samples)      : 10 x 8 EEG values in microvolts per packet.
+        ppg_callback(samples)  : PPG values in volts per packet (2 samples at 50 Hz),
+                                 only called when the firmware sends PPG data.
+        """
+        ppg_seen = False
+
         while True:
             try:
                 # Get a task from the eeg_queue
@@ -306,27 +315,31 @@ class AlchemiacProxy:
                 # Unpack the task
                 packet_received, data, packet_number = task
                 
+                ppg_samples = None
                 if packet_received:
-                    samples = []
-                    n_complete = len(data) // 24  # ignore any trailing partial chunk
-                    if len(data) % 24 != 0:
+                    # EEG samples first, then the optional PPG samples (see packet_format.py)
+                    eeg_data, ppg_data, leftover = packet_format.split_payload(data)
+                    if leftover:
                         print(f"Warning: packet {packet_number} has {len(data)} bytes "
-                              f"(not a multiple of 24). Dropping {len(data) % 24} trailing byte(s).")
-                    if n_complete == 0:
+                              f"(not a multiple of 24). Dropping {leftover} trailing byte(s).")
+                    if len(eeg_data) == 0:
                         print(f"Warning: packet {packet_number} has no complete samples, skipping.")
                         continue
-                    for i in range(0, n_complete * 24, 24):  # only complete 24-byte samples
-                        sample = []
-                        for j in range(0, 24, 3):  # 8 channels × 3 bytes each
-                            channel_data = data[i + j:i + j + 3]
-                            sample.append(int.from_bytes(channel_data, byteorder='big', signed=True))
-                        samples.append(AlchemiacProxy.convert_ads1299_to_microvolts(sample))
+                    samples = [AlchemiacProxy.convert_ads1299_to_microvolts(sample)
+                               for sample in packet_format.decode_eeg_raw(eeg_data)]
+                    if ppg_data is not None:
+                        ppg_seen = True
+                        ppg_samples = packet_format.decode_ppg_volts(ppg_data)
                 else:
                     # Fill with 10 x 8 NaN values
                     samples = [[np.nan] * 8 for _ in range(10)]
-                
+                    if ppg_seen:
+                        ppg_samples = [np.nan] * packet_format.PPG_SAMPLES_PER_PACKET
+
                 # Write to the CSV file
                 callback(samples)
+                if ppg_callback is not None and ppg_samples is not None:
+                    ppg_callback(ppg_samples)
                 #packet_writer.writerow([packet_number, packet_received])
                 
             except Exception as e:
