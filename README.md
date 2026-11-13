@@ -85,9 +85,13 @@ python AlchemiacController.py
 
 4. **Live visualizer** — A PyQtGraph window opens showing all 8 EEG channels in real time with a 15–30 Hz bandpass filter applied. The window plots a rolling 5-second buffer.
 
-5. **CSV recording** — Two timestamped files are written to `example/data/`:
-   - `alchemiac_eeg_<timestamp>.csv` — columns: `AF8, AF7, CHEEK_R, CHEEK_L, EAR_R, AFz, BROW_L, NOSE` (values in µV)
-   - `alchemiac_motion_<timestamp>.csv` — columns: `x(g), y(g), z(g), x(deg/s), y(deg/s), z(deg/s), x(G), y(G), z(G)`
+5. **CSV recording** — Three files are written to `example/data/`. Their first column, `timestamp(s)`, is the Unix time of each sample in seconds (6 decimals):
+   - `alchemiac_eeg_<timestamp>.csv` — columns: `timestamp(s), AF8, AF7, CHEEK_R, CHEEK_L, EAR_R, AFz, BROW_L, NOSE` (values in µV)
+   - `alchemiac_motion_<timestamp>.csv` — columns: `timestamp(s), x(g), y(g), z(g), x(deg/s), y(deg/s), z(deg/s), x(G), y(G), z(G)`
+   - `alchemiac_ppg_<timestamp>.csv` — columns: `timestamp(s), PPG(V)` (empty if the firmware sends no PPG)
+
+   EEG and PPG times are on a regular grid (250 Hz and 50 Hz) anchored on the PC arrival time of the first packet;
+   motion times are the PC arrival time of each IMU notification. See [Timestamps](#timestamps).
 
 6. **Streaming duration** — After a 1-second stabilisation pause, the session streams for 240 seconds (4 minutes) then shuts down automatically. You can also press **Ctrl+C** at any time for a clean shutdown.
 
@@ -173,6 +177,7 @@ proxy = AlchemiacProxy(
     motion_callback=my_motion,  # callable(sample: tuple[float, ...]) | None
     event_callback=None,  # reserved for future button-event callbacks
     ppg_callback=my_ppg,  # callable(samples: list[float]) | None — PPG clip (optional)
+    with_timestamps=False,  # True: callbacks also receive Unix timestamps (see below)
 )
 ```
 
@@ -243,6 +248,24 @@ def my_ppg_callback(samples):
 
 The phototransistor pulls the signal down when it receives more light: the pulse appears inverted.
 `AlchemiacController.py` plots the raw PPG under the EEG and saves it to `data/alchemiac_ppg_<date>.csv`.
+
+#### Timestamps
+
+With `with_timestamps=True`, each callback receives a second argument, in Unix seconds (`time.time()`):
+
+```python
+def my_eeg_callback(samples, timestamps):   # timestamps: one float per EEG sample
+def my_ppg_callback(samples, timestamps):   # timestamps: one float per PPG sample
+def my_motion_callback(sample, timestamp):  # timestamp: one float
+```
+
+- **EEG**: regular 250 Hz grid. The last sample of the first packet gets that packet's PC arrival time, and each
+  following sample is 1/250 s later. Dropped packets (NaN) keep their place, so the grid stays aligned. The grid
+  follows the headset clock: over a long session it can drift by a few milliseconds from the PC clock.
+- **PPG**: the time of EEG samples 4 and 9 of the same packet, when the firmware reads the ADS1118 (50 Hz).
+- **Motion**: PC arrival time of the IMU notification (includes the Bluetooth latency and jitter).
+
+Without the flag (default), the callbacks keep their one-argument form.
 
 ---
 
