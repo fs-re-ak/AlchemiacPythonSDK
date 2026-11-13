@@ -85,9 +85,13 @@ python AlchemiacController.py
 
 4. **Live visualizer** — A PyQtGraph window opens showing all 8 EEG channels in real time with a 15–30 Hz bandpass filter applied. The window plots a rolling 5-second buffer.
 
-5. **CSV recording** — Two timestamped files are written to `example/data/`:
-   - `alchemiac_eeg_<timestamp>.csv` — columns: `AF8, AF7, CHEEK_R, CHEEK_L, EAR_R, AFz, BROW_L, NOSE` (values in µV)
-   - `alchemiac_motion_<timestamp>.csv` — columns: `x(g), y(g), z(g), x(deg/s), y(deg/s), z(deg/s), x(G), y(G), z(G)`
+5. **CSV recording** — Three files are written to `example/data/`. Their first column, `timestamp(s)`, is the Unix time of each sample in seconds (6 decimals):
+   - `alchemiac_eeg_<timestamp>.csv` — columns: `timestamp(s), AF8, AF7, CHEEK_R, CHEEK_L, EAR_R, AFz, BROW_L, NOSE` (values in µV)
+   - `alchemiac_motion_<timestamp>.csv` — columns: `timestamp(s), x(g), y(g), z(g), x(deg/s), y(deg/s), z(deg/s), x(G), y(G), z(G)`
+   - `alchemiac_ppg_<timestamp>.csv` — columns: `timestamp(s), PPG(V)` (empty if the firmware sends no PPG)
+
+   EEG and PPG times are on a regular grid (250 Hz and 50 Hz) anchored on the PC arrival time of the first packet;
+   motion times are the PC arrival time of each IMU notification. See [Timestamps](#timestamps).
 
 6. **Streaming duration** — After a 1-second stabilisation pause, the session streams for 240 seconds (4 minutes) then shuts down automatically. You can also press **Ctrl+C** at any time for a clean shutdown.
 
@@ -142,8 +146,9 @@ The script then runs **indefinitely** (no fixed duration), forwarding data to LS
 |---|---|---|---|---|
 | `Reak_EEG` | `EEG` | 8 — `AF8, AF7, CHEEK_R, CHEEK_L, EAR_R, AFz, BROW_L, NOSE` | 250 Hz | float32 (µV) |
 | `Reak_Motion` | `Motion` | 9 — `ax(g), ay(g), az(g), gx(deg/s), gy(deg/s), gz(deg/s), cx(G), cy(G), cz(G)` | 100 Hz | float32 |
+| `Reak_PPG` | `PPG` | 1 — `PPG(V)` | 50 Hz | float32 (V) — only fed when the firmware sends PPG |
 
-Each stream carries full channel metadata (label per channel) readable by any LSL resolver. Stream UIDs are `reak_eeg_001` and `reak_motion_001`.
+Each stream carries full channel metadata (label per channel) readable by any LSL resolver. Stream UIDs are `reak_eeg_001`, `reak_motion_001` and `reak_ppg_001`.
 
 ---
 
@@ -171,6 +176,8 @@ proxy = AlchemiacProxy(
     eeg_callback=my_eeg,  # callable(samples: list[list[float]]) | None
     motion_callback=my_motion,  # callable(sample: tuple[float, ...]) | None
     event_callback=None,  # reserved for future button-event callbacks
+    ppg_callback=my_ppg,  # callable(samples: list[float]) | None — PPG clip (optional)
+    with_timestamps=False,  # True: callbacks also receive Unix timestamps (see below)
 )
 ```
 
@@ -225,6 +232,41 @@ def my_motion_callback(sample):
     ax, ay, az, gx, gy, gz, cx, cy, cz = sample
 ```
 
+#### PPG callback
+
+Called once per EEG packet, right after the EEG callback, when the firmware appends the PPG clip samples
+(ADS1118, AIN0) to the EEG packet. It is never called with a firmware that sends no PPG.
+
+```python
+def my_ppg_callback(samples):
+    """
+    samples: list of 2 floats, in volts, sampled at 50 Hz (one every 5 EEG samples).
+             float('nan') for a dropped packet or when the firmware reports no valid sample
+             (ADS1118 absent or SPI error).
+    """
+```
+
+The phototransistor pulls the signal down when it receives more light: the pulse appears inverted.
+`AlchemiacController.py` plots the raw PPG under the EEG and saves it to `data/alchemiac_ppg_<date>.csv`.
+
+#### Timestamps
+
+With `with_timestamps=True`, each callback receives a second argument, in Unix seconds (`time.time()`):
+
+```python
+def my_eeg_callback(samples, timestamps):   # timestamps: one float per EEG sample
+def my_ppg_callback(samples, timestamps):   # timestamps: one float per PPG sample
+def my_motion_callback(sample, timestamp):  # timestamp: one float
+```
+
+- **EEG**: regular 250 Hz grid. The last sample of the first packet gets that packet's PC arrival time, and each
+  following sample is 1/250 s later. Dropped packets (NaN) keep their place, so the grid stays aligned. The grid
+  follows the headset clock: over a long session it can drift by a few milliseconds from the PC clock.
+- **PPG**: the time of EEG samples 4 and 9 of the same packet, when the firmware reads the ADS1118 (50 Hz).
+- **Motion**: PC arrival time of the IMU notification (includes the Bluetooth latency and jitter).
+
+Without the flag (default), the callbacks keep their one-argument form.
+
 ---
 
 ### Minimal integration example
@@ -274,6 +316,17 @@ finally:
 | Motion (IMU) | `9fa48201-4967-11e5-a151-0002a5d5c51b` | Notify — accelerometer + gyro + magnetometer |
 
 Packet format for EEG Data: a 1-byte rolling sequence number (0–127) followed by N × 24-byte samples, where each 24-byte block encodes 8 channels × 3 bytes (big-endian, signed). The proxy handles packet-drop detection and gap-filling automatically.
+
+With the PPG clip firmware, the packet is 245 bytes: the 10 EEG samples are followed by 2 PPG samples of
+2 bytes each (int16, big-endian, 1 LSB = 125 µV, `0x8000` = no valid sample). Firmware without PPG sends
+241-byte packets, which the SDK still decodes. Decoding lives in `example/proxies/packet_format.py`.
+
+### Running the tests
+
+```bash
+cd example
+python -m unittest discover -s tests -v
+```
 
 ---
 

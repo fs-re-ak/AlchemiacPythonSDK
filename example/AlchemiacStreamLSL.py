@@ -18,6 +18,9 @@ EEG_SAMPLING_RATE = 250
 MOTION_CHANNELS = ["ax(g)", "ay(g)", "az(g)", "gx(deg/s)", "gy(deg/s)", "gz(deg/s)", "cx(G)", "cy(G)", "cz(G)"]
 MOTION_SAMPLING_RATE = 100
 
+PPG_CHANNELS = ["PPG(V)"]
+PPG_SAMPLING_RATE = 50
+
 
 # ─── Graceful shutdown ───────────────────────────────────────────────────────
 shutdown_flag = False
@@ -55,7 +58,14 @@ if __name__ == "__main__":
         lsl_motion_info.desc().append_child("channels").append_child("channel").append_child_value("label", label)
     lsl_motion_outlet = StreamOutlet(lsl_motion_info)
 
-    print("[INFO] LSL streams initialized: Reak_EEG + Reak_Motion")
+    lsl_ppg_info = StreamInfo(
+        'Reak_PPG', 'PPG', len(PPG_CHANNELS), PPG_SAMPLING_RATE, 'float32', 'reak_ppg_001'
+    )
+    for label in PPG_CHANNELS:
+        lsl_ppg_info.desc().append_child("channels").append_child("channel").append_child_value("label", label)
+    lsl_ppg_outlet = StreamOutlet(lsl_ppg_info)
+
+    print("[INFO] LSL streams initialized: Reak_EEG + Reak_Motion + Reak_PPG")
 
     # 3. Callbacks — forward decoded data directly to LSL outlets
     def eeg_callback(samples):
@@ -65,10 +75,15 @@ if __name__ == "__main__":
     def motion_callback(sample):
         lsl_motion_outlet.push_sample(list(sample))
 
+    def ppg_callback(samples):
+        for value in samples:
+            lsl_ppg_outlet.push_sample([value])
+
     proxy = None
     try:
         # 4. Connect
-        proxy = AlchemiacProxy(device_address, eeg_callback=eeg_callback, motion_callback=motion_callback)
+        proxy = AlchemiacProxy(device_address, eeg_callback=eeg_callback, motion_callback=motion_callback,
+                               ppg_callback=ppg_callback)
         proxy.waitForConnected()
 
         print("Stabilising signal…")
