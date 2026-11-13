@@ -23,9 +23,11 @@ ppg_file    = open(f"data/alchemiac_ppg_{_timestamp}.csv",    "w", newline="")
 eeg_writer    = csv.writer(eeg_file)
 motion_writer = csv.writer(motion_file)
 ppg_writer    = csv.writer(ppg_file)
-eeg_writer.writerow(["AF8", "AF7", "CHEEK_R", "CHEEK_L", "EAR_R", "AFz", "BROW_L", "NOSE"])
-motion_writer.writerow(["x(g)", "y(g)", "z(g)", "x(deg/s)", "y(deg/s)", "z(deg/s)", "x(G)", "y(G)", "z(G)"])
-ppg_writer.writerow(["PPG(V)"])  # 50 Hz, empty if the firmware sends no PPG
+# First column of every file: Unix time in seconds (see AlchemiacProxy with_timestamps)
+TIME_COLUMN = "timestamp(s)"
+eeg_writer.writerow([TIME_COLUMN, "AF8", "AF7", "CHEEK_R", "CHEEK_L", "EAR_R", "AFz", "BROW_L", "NOSE"])
+motion_writer.writerow([TIME_COLUMN, "x(g)", "y(g)", "z(g)", "x(deg/s)", "y(deg/s)", "z(deg/s)", "x(G)", "y(G)", "z(G)"])
+ppg_writer.writerow([TIME_COLUMN, "PPG(V)"])  # 50 Hz, empty if the firmware sends no PPG
 
 
 def _close_files():
@@ -41,7 +43,7 @@ q = None
 ppg_q = None
 
 
-def eeg_callback(samples):
+def eeg_callback(samples, timestamps):
     global q
     if not samples:           # skip empty packet (e.g. 0-byte data after header)
         return
@@ -51,22 +53,23 @@ def eeg_callback(samples):
         print(f"[EEG] Unexpected sample array shape {arr.shape}, skipping visualizer update.")
     elif q is not None:
         q.put(arr)
-    eeg_writer.writerows(samples)
+    eeg_writer.writerows([f"{t:.6f}", *sample] for t, sample in zip(timestamps, samples))
 
 
-def motion_callback(sample):
+def motion_callback(sample, timestamp):
     ax, ay, az, gx, gy, gz, cx, cy, cz = sample
     motion_writer.writerow([
+        f"{timestamp:.6f}",
         f"{ax:.5f}", f"{ay:.5f}", f"{az:.5f}",
         f"{gx:.5f}", f"{gy:.5f}", f"{gz:.5f}",
         f"{cx:.5f}", f"{cy:.5f}", f"{cz:.5f}",
     ])
 
 
-def ppg_callback(samples):
+def ppg_callback(samples, timestamps):
     if ppg_q is not None:
         ppg_q.put(list(samples))
-    ppg_writer.writerows([[f"{v:.6f}"] for v in samples])
+    ppg_writer.writerows([f"{t:.6f}", f"{v:.6f}"] for t, v in zip(timestamps, samples))
 
 
 # ─── Graceful shutdown ───────────────────────────────────────────────────────
@@ -103,7 +106,8 @@ if __name__ == "__main__":
         proxy = AlchemiacProxy(device_address,
                                eeg_callback=eeg_callback,
                                motion_callback=motion_callback,
-                               ppg_callback=ppg_callback)
+                               ppg_callback=ppg_callback,
+                               with_timestamps=True)
         proxy.waitForConnected()
 
         # Brief stabilisation pause before the live demo
