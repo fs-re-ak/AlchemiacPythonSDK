@@ -51,7 +51,15 @@ class AlchemiacProxy:
 
     CONNECT_TIMEOUT = 30.0
     
-    def __init__(self, mac_address, eeg_callback=None, motion_callback=None, event_callback=None, ppg_callback=None):
+    def __init__(self, mac_address, eeg_callback=None, motion_callback=None, event_callback=None, ppg_callback=None,
+                 with_timestamps=False):
+        """
+        with_timestamps : bool
+            False (default): callbacks receive the values only, as before.
+            True: callbacks also receive Unix timestamps in seconds —
+            eeg_callback(samples, timestamps), ppg_callback(samples, timestamps),
+            motion_callback(sample, timestamp). See worker_process / motion_process.
+        """
 
         self.is_connected = False
         self.connection_error = None
@@ -60,6 +68,7 @@ class AlchemiacProxy:
         self.packets = []
         self.samples_per_packets = []
         self.packet_received = []
+        self.packet_times = []      # PC arrival time of each packet (None for a dropped one)
         self.mac_address = mac_address
         
         self.eeg_queue = multiprocessing.Queue()
@@ -68,10 +77,10 @@ class AlchemiacProxy:
         self.shutdown_event = asyncio.Event()
         self.loop = None  # Global to hold the event loop reference
         
-        self.eeg_worker = threading.Thread(target=AlchemiacProxy.worker_process, args=(self.eeg_queue, eeg_callback, ppg_callback))
+        self.eeg_worker = threading.Thread(target=AlchemiacProxy.worker_process, args=(self.eeg_queue, eeg_callback, ppg_callback, with_timestamps))
         self.eeg_worker.start()
 
-        self.motion_worker = threading.Thread(target=AlchemiacProxy.motion_process, args=(self.motion_queue, motion_callback))
+        self.motion_worker = threading.Thread(target=AlchemiacProxy.motion_process, args=(self.motion_queue, motion_callback, with_timestamps))
         self.motion_worker.start()
         
         self.async_thread = threading.Thread(target=self.run_async_main)
@@ -139,6 +148,7 @@ class AlchemiacProxy:
     async def packet_handler(self, client, sender, data):
         
         """Handler for receiving notifications from the new characteristic."""
+        arrival_time = time()  # Unix time (s), taken first to limit the delay
         try:
             # Unpack the 192-byte packet into 8 samples, each with 8 channels (24 bits each)
             samples = []
@@ -153,8 +163,10 @@ class AlchemiacProxy:
                     self.packets.append(packet)
                     self.packet_received.append(False)
                     self.samples_per_packets.append(None)
+                    self.packet_times.append(None)
             
             self.samples_per_packets.append(data)
+            self.packet_times.append(arrival_time)
             self.packet_received.append(True)
             self.packets.append(current_packet)
             self.last_packet = current_packet
@@ -193,12 +205,14 @@ class AlchemiacProxy:
                 break
 
             # Enqueue the packet data for the worker process
-            self.eeg_queue.put((self.packet_received[0],  self.samples_per_packets[0], self.packets[0]))
+            self.eeg_queue.put((self.packet_received[0],  self.samples_per_packets[0], self.packets[0],
+                                self.packet_times[0]))
 
             # Remove the processed packet from the lists
             self.packet_received = self.packet_received[1:]
             self.samples_per_packets =  self.samples_per_packets[1:]
             self.packets = self.packets[1:]
+            self.packet_times = self.packet_times[1:]
 
 
     def run_async_main(self):
@@ -295,15 +309,23 @@ class AlchemiacProxy:
               
               
     @staticmethod
-    def worker_process(eeg_queue, callback, ppg_callback=None):
+    def worker_process(eeg_queue, callback, ppg_callback=None, with_timestamps=False):
         """
         Worker process to write samples to a CSV file.
 
         callback(samples)      : 10 x 8 EEG values in microvolts per packet.
         ppg_callback(samples)  : PPG values in volts per packet (2 samples at 50 Hz),
                                  only called when the firmware sends PPG data.
+
+        With with_timestamps=True, both callbacks get a second argument: one Unix timestamp (s)
+        per sample, on a regular 250 Hz grid. The last sample of the first packet gets that
+        packet's PC arrival time; every following sample is 1/250 s later, dropped packets
+        (NaN) included, so the count stays right. PPG samples take the time of EEG samples
+        4 and 9 of their packet, when the firmware reads them.
         """
         ppg_seen = False
+        first_sample_time = None    # Unix time of the very first EEG sample
+        sample_count = 0            # EEG samples delivered so far, NaN fill included
 
         while True:
             try:
@@ -313,7 +335,7 @@ class AlchemiacProxy:
                     break
                 
                 # Unpack the task
-                packet_received, data, packet_number = task
+                packet_received, data, packet_number, arrival_time = task
                 
                 ppg_samples = None
                 if packet_received:
@@ -336,10 +358,24 @@ class AlchemiacProxy:
                     if ppg_seen:
                         ppg_samples = [np.nan] * packet_format.PPG_SAMPLES_PER_PACKET
 
-                # Write to the CSV file
-                callback(samples)
+                if not with_timestamps:
+                    callback(samples)
+                    if ppg_callback is not None and ppg_samples is not None:
+                        ppg_callback(ppg_samples)
+                    continue
+
+                if first_sample_time is None and arrival_time is not None:
+                    first_sample_time = arrival_time - (len(samples) - 1) / SAMPLE_RATE
+                packet_start = first_sample_time + sample_count / SAMPLE_RATE
+                sample_count += len(samples)
+                eeg_times = [packet_start + k / SAMPLE_RATE for k in range(len(samples))]
+
+                callback(samples, eeg_times)
                 if ppg_callback is not None and ppg_samples is not None:
-                    ppg_callback(ppg_samples)
+                    step = len(samples) // len(ppg_samples)       # 10 EEG / 2 PPG -> 5
+                    ppg_times = [packet_start + (step * (j + 1) - 1) / SAMPLE_RATE
+                                 for j in range(len(ppg_samples))]  # EEG samples 4 and 9
+                    ppg_callback(ppg_samples, ppg_times)
                 #packet_writer.writerow([packet_number, packet_received])
                 
             except Exception as e:
@@ -347,7 +383,11 @@ class AlchemiacProxy:
                 break
 
     @staticmethod
-    def motion_process(motion_queue, callback):
+    def motion_process(motion_queue, callback, with_timestamps=False):
+        """
+        callback(sample) with the 9 values in physical units, or callback(sample, timestamp)
+        with with_timestamps=True: Unix time (s) at which the PC received the BLE notification.
+        """
         filePath="data"
 
         while True:
@@ -372,7 +412,10 @@ class AlchemiacProxy:
                 cz_raw *= MAG_SENS
                 
                 sample = (ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, cx_raw, cy_raw, cz_raw)
-                callback(sample)
+                if with_timestamps:
+                    callback(sample, timestamp)
+                else:
+                    callback(sample)
             except Exception as e:
                 print(f"[AlchemiacProxy.py] motion_process: Error: {e}")
               
