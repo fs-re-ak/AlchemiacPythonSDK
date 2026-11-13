@@ -13,8 +13,9 @@ def butter_bandpass(lowcut, highcut, fs, order=4):
     return butter(order, [low, high], btype='band')
 
 
-def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=250, 
-               apply_filter=True, lowcut=15, highcut=30.0, order=2):
+def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=250,
+               apply_filter=True, lowcut=15, highcut=30.0, order=2,
+               ppg_queue: Queue = None, ppgSamplingRate=50):
     """
     Real-time EEG plotter using PyQtGraph with optional bandpass filtering.
 
@@ -40,6 +41,13 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
 
     order : int
         Filter order.
+
+    ppg_queue : multiprocessing.Queue, optional
+        Queue through which PPG samples (list of floats, volts) are received.
+        When given, a second plot shows the raw PPG signal (10 s window).
+
+    ppgSamplingRate : float
+        Sampling rate of the PPG data (Hz).
     """
 
     app = QtWidgets.QApplication([])
@@ -59,6 +67,35 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
 
     channel_offsets = [100 * i for i in range(nbChannels)]
 
+    # --- Optional PPG plot (raw volts, no filtering) ---
+    ppg_curve = None
+    if ppg_queue is not None:
+        win.resize(800, 650)
+        win.nextRow()
+        ppg_plot = win.addPlot(title="PPG (ADS1118 AIN0)")
+        ppg_plot.showGrid(x=True, y=True)
+        ppg_plot.setLabel('left', 'Tension (V)')
+        ppg_plot.setLabel('bottom', 'Time (samples)')
+        ppg_curve = ppg_plot.plot(pen=pg.mkPen('r', width=2))
+        ppg_buffer = np.full(int(ppgSamplingRate * 10), np.nan)  # 10 seconds
+
+    def update_ppg():
+        nonlocal ppg_buffer
+        new_values = []
+        while True:
+            try:
+                values = ppg_queue.get_nowait()
+            except Empty:
+                break
+            if values is None:
+                continue
+            new_values.extend(float(v) for v in values)
+        if new_values:
+            n = min(len(new_values), ppg_buffer.size)
+            ppg_buffer = np.roll(ppg_buffer, -n)
+            ppg_buffer[-n:] = new_values[-n:]
+            ppg_curve.setData(ppg_buffer, connect='finite')
+
     # --- Initialize filter if enabled ---
     if apply_filter:
         b, a = butter_bandpass(lowcut, highcut, fs=samplingRate, order=order)
@@ -68,6 +105,8 @@ def visualizer(queue: Queue, shutdown_event: Event, nbChannels=8, samplingRate=2
 
     def update():
         nonlocal filter_states
+        if ppg_curve is not None:
+            update_ppg()
         while True:
             try:
                 samples = queue.get_nowait()
