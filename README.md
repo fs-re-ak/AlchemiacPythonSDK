@@ -321,6 +321,26 @@ With the PPG clip firmware, the packet is 245 bytes: the 10 EEG samples are foll
 2 bytes each (int16, big-endian, 1 LSB = 125 µV, `0x8000` = no valid sample). Firmware without PPG sends
 241-byte packets, which the SDK still decodes. Decoding lives in `example/proxies/packet_format.py`.
 
+### Checking the BLE transfer (test firmware)
+
+`example/ble_pattern_check.py` validates the BLE link and the SDK decoding end to end. It needs a
+headset flashed with a firmware built with `BLE_TEST_PATTERN=1` (Alchmiac-fw, see
+`tests/host/README.md`): that firmware replaces the EEG, PPG and IMU values with 16-bit counters
+(EEG and PPG big-endian, IMU little-endian, negative values included). The script receives them
+through `AlchemiacProxy` and checks every value: byte order, sign extension, wrap-arounds, packet
+reassembly and loss detection.
+
+```bash
+cd example
+python ble_pattern_check.py                  # scan, then a 300 s capture
+python ble_pattern_check.py --duration 600 --address 00:80:E1:27:47:BC
+```
+
+It prints a report and exits with code 0 when the test passes: no decoding error, at least one
+wrap-around of the 16-bit counter (one every 262 s), EEG, PPG and IMU data received. Losses
+signalled by the packet index are counted separately. The checks live in
+`example/utils/ble_test_pattern.py`. Never use the test firmware for measurements.
+
 ### Running the tests
 
 ```bash
