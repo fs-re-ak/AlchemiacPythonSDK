@@ -18,22 +18,27 @@ freeze_support()
 _timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 eeg_file    = open(f"data/alchemiac_eeg_{_timestamp}.csv",    "w", newline="")
 motion_file = open(f"data/alchemiac_motion_{_timestamp}.csv", "w", newline="")
+ppg_file    = open(f"data/alchemiac_ppg_{_timestamp}.csv",    "w", newline="")
 
 eeg_writer    = csv.writer(eeg_file)
 motion_writer = csv.writer(motion_file)
+ppg_writer    = csv.writer(ppg_file)
 eeg_writer.writerow(["AF8", "AF7", "CHEEK_R", "CHEEK_L", "EAR_R", "AFz", "BROW_L", "NOSE"])
 motion_writer.writerow(["x(g)", "y(g)", "z(g)", "x(deg/s)", "y(deg/s)", "z(deg/s)", "x(G)", "y(G)", "z(G)"])
+ppg_writer.writerow(["PPG(V)"])  # 50 Hz, empty if the firmware sends no PPG
 
 
 def _close_files():
     eeg_file.close()
     motion_file.close()
+    ppg_file.close()
 
 atexit.register(_close_files)
 
 
 # ─── Callbacks ───────────────────────────────────────────────────────────────
 q = None
+ppg_q = None
 
 
 def eeg_callback(samples):
@@ -56,6 +61,12 @@ def motion_callback(sample):
         f"{gx:.5f}", f"{gy:.5f}", f"{gz:.5f}",
         f"{cx:.5f}", f"{cy:.5f}", f"{cz:.5f}",
     ])
+
+
+def ppg_callback(samples):
+    if ppg_q is not None:
+        ppg_q.put(list(samples))
+    ppg_writer.writerows([[f"{v:.6f}"] for v in samples])
 
 
 # ─── Graceful shutdown ───────────────────────────────────────────────────────
@@ -82,7 +93,8 @@ if __name__ == "__main__":
 
     # 2. Start the EEG visualizer in a separate process
     q = Queue()
-    vis_process = Process(target=visualizer, args=(q, shutdown_event))
+    ppg_q = Queue()
+    vis_process = Process(target=visualizer, args=(q, shutdown_event), kwargs={"ppg_queue": ppg_q})
     vis_process.start()
 
     proxy = None
@@ -90,7 +102,8 @@ if __name__ == "__main__":
         # 3. Connect
         proxy = AlchemiacProxy(device_address,
                                eeg_callback=eeg_callback,
-                               motion_callback=motion_callback)
+                               motion_callback=motion_callback,
+                               ppg_callback=ppg_callback)
         proxy.waitForConnected()
 
         # Brief stabilisation pause before the live demo
